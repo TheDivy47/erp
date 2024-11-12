@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="style.css" />
+    <title>Document</title>
+    <style>
+      #message-area {
+        margin-bottom: 15px;
+        margin-top: -10px;
+        padding: 10px;
+        border-radius: 5px;
+        color: #fff;
+        text-align: center;
+      }
+      .error {
+        background-color: #ff4d4d;
+      }
+      .success {
+        background-color: #4caf50;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loading-screen" class="loading-screen">
+      <div class="loading-animation">
+        <div class="loading-text">Just a sec, painting the pixels!</div>
+        <div class="loading-bar">
+          <div class="loading-fill"></div>
+        </div>
+      </div>
+    </div>
+    <div id="sync-timer">Server sync in <span id="countdown">5</span> seconds</div>
+
+    <div class="form-container">
+      <form id="sheet-form">
+        <input type="checkbox" id="page-flip" style="display: none" />
+
+        <div class="flip-container">
+          <!-- Page 1 -->
+          <div class="flipper">
+            <div class="front">
+              <h4>INVENTORY SYSTEM FOR GARMENT CONSTRUCTION LAB</h4>
+              <br />
+              <br />
+              <label for="name-input">Name</label>
+              <br />
+              <br />
+              <input
+                type="text"
+                id="name-input"
+                placeholder="Eg: Divyadarshan"
+                required
+                pattern="^[A-Za-z]+(?:\s[A-Za-z]+)*$" />
+              <br />
+              <br />
+
+              <label for="action">Action</label>
+              <br />
+              <br />
+              <select id="action">
+                <option value="Borrow">Borrow</option>
+                <option value="Return">Return</option>
+              </select>
+              <br /><br />
+              <label for="page-flip" class="label-flip">Next</label>
+            </div>
+
+            <!-- Page 2 -->
+            <div class="back">
+              <label for="item-dropdown">Item</label>
+              <br />
+              <br />
+              <select id="item-dropdown"></select>
+              <br /><br />
+              <div class="row">
+                <div>
+                  <label for="total-quantity-input">Total Quantity</label>
+                  <br />
+                  <input type="text" id="total-quantity-input" disabled />
+                </div>
+                <br />
+
+                <div>
+                  <label for="remaining-quantity-input">Remaining Quantity</label>
+                  <br />
+                  <input type="text" id="remaining-quantity-input" disabled />
+                </div>
+                <!-- <br /><br /> -->
+              </div>
+
+              <label for="quantity-input">Quantity</label>
+              <br /><br />
+              <input type="number" id="quantity-input" required min="1" />
+              <br />
+              <br />
+
+              <label for="page-flip" class="label-flip">Back</label>
+              <br />
+              <div class="buttondiv">
+                <button type="submit" id="submit-button">Submit</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </form>
+    </div>
+    <div id="message-area"></div>
+
+    <table id="transaction-history">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Item</th>
+          <th>Quantity</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- History data will be populated here -->
+      </tbody>
+    </table>
+
+    <!-- Script to handle interactions -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+      $(document).ready(function () {
+        const scriptUrl =
+          "https://script.google.com/macros/s/AKfycbxmbHoNElWqIrDfgzBtVhgkusVS051bMAM4GfIdvkEjQt2Z_XrPEVTTtsRNb1vQJ_gN/exec"; // Replace with your script URL
+
+        const fetchDataInterval = 10000; // 10 seconds
+        let countdown = fetchDataInterval / 1000; // Convert to seconds
+
+        // Fetch data and reset countdown when the page loads
+        fetchAllData();
+        resetCountdown();
+        let currentlySelected = null;
+        let remainingQuantity = null;
+        let totalQuantity = null;
+
+        // Update countdown every second
+        setInterval(function () {
+          updateCountdown();
+        }, 1000);
+
+        // Fetch data every 10 seconds, synchronized with the countdown
+        setInterval(function () {
+          fetchAllData();
+        }, fetchDataInterval);
+
+        function updateCountdown() {
+          countdown--;
+          $("#countdown").text(countdown);
+
+          if (countdown === 0) {
+            resetCountdown();
+          }
+        }
+
+        function resetCountdown() {
+          countdown = fetchDataInterval / 1000;
+          $("#countdown").text(countdown);
+        }
+
+        $("#sheet-form").submit(function (event) {
+          event.preventDefault();
+          processFormSubmission(currentlySelected);
+        });
+
+        // Updates the total and remaining quantities when a different item is selected from the dropdown.
+
+        $("#item-dropdown").change(function () {
+          currentlySelected = this.value;
+          updateQuantitiesForSelectedItem(this.value);
+
+          // Store the remaining and total quantities for the selected item
+          remainingQuantity = $("#remaining-quantity-input").val();
+          totalQuantity = $("#total-quantity-input").val();
+        });
+
+        // Gathers data from form inputs and Validates the transaction with validateTransaction.
+        function processFormSubmission() {
+          let itemName = $("#item-dropdown").val();
+          let action = $("#action").val();
+          let name = $("#name-input").val();
+          let quantity = parseInt($("#quantity-input").val(), 10);
+
+          // Fetch the latest data
+          let inventoryData = JSON.parse(localStorage.getItem("inventoryData") || "[]");
+          let historyData = JSON.parse(localStorage.getItem("historyData") || "[]");
+
+          let validationResult = validateTransaction(itemName, action, name, quantity, inventoryData, historyData);
+
+          // If the transaction is valid, update data and UI, and sync with Google Sheet
+          if (validationResult.valid) {
+            updateLocalDataAndUI(itemName, action, name, quantity, inventoryData, historyData);
+            syncDataWithSheet(itemName, action, name, quantity);
+
+            // Display success message
+            updateMessageArea(`Your transaction to ${action} ${quantity} ${itemName}(s) is successful.`, "success");
+            $("#page-flip").prop("checked", false);
+            $("#name-input").val("");
+            $("#quantity-input").val("");
+            $("#item-dropdown").val(itemName);
+            updateQuantitiesForSelectedItem(itemName);
+          } else {
+            // In case of an invalid transaction, display an error message
+            updateMessageArea(validationResult.message, "error");
+          }
+        }
+
+        function updateMessageArea(message, type) {
+          const $messageArea = $("#message-area");
+          $messageArea.removeClass("error success");
+          $messageArea.addClass(type);
+          $messageArea.text(message);
+        }
+
+        function validateTransaction(itemName, action, name, quantity, inventoryData, historyData) {
+          console.log("Validating Transaction:", itemName, action, quantity);
+
+          // Check for positive quantity
+          if (quantity <= 0) {
+            return { valid: false, message: "Quantity must be greater than zero." };
+          }
+
+          // Find the item in inventory
+          let itemIndex = inventoryData.findIndex((item) => item[0].toLowerCase() === itemName.toLowerCase());
+          if (itemIndex === -1) {
+            return { valid: false, message: "Item not found in inventory." };
+          }
+
+          let itemData = inventoryData[itemIndex];
+
+          let remainingQuantity = parseInt(itemData[3], 10);
+
+          // Borrow action validation
+          if (action === "Borrow") {
+            if (remainingQuantity <= 0) {
+              return { valid: false, message: `No "${itemName}" available to borrow.` };
+            }
+            if (quantity > remainingQuantity) {
+              return {
+                valid: false,
+                message: `Not enough "${itemName}" available to borrow. Only ${remainingQuantity} left.`,
+              };
+            }
+          }
+
+          // Return action validation
+          else if (action === "Return") {
+            let historyIndex = historyData.findIndex(
+              (record) =>
+                record[0].toLowerCase() === name.toLowerCase() && record[1].toLowerCase() === itemName.toLowerCase()
+            );
+
+            if (historyIndex === -1) {
+              return { valid: false, message: "Invalid return: No borrowing record found." };
+            }
+
+            let borrowed = parseInt(historyData[historyIndex][2], 10);
+            if (borrowed === 0) {
+              return { valid: false, message: `You have already returned all borrowed '${itemName}'.` };
+            }
+            if (borrowed < quantity) {
+              return { valid: false, message: "Invalid return: You can't return more than you've borrowed." };
+            }
+          }
+
+          return { valid: true, message: "" };
+        }
+
+        function updateLocalDataAndUI(itemName, action, name, quantity, inventoryData, historyData) {
+          console.log("Updating Local Data:", itemName, action, quantity);
+          let itemIndex = inventoryData.findIndex((item) => item[0].toLowerCase() === itemName.toLowerCase());
+          if (itemIndex === -1) {
+            alert("Item not found in inventory.");
+            return;
+          }
+
+          let itemData = inventoryData[itemIndex];
+          let totalQuantity = itemData[1];
+          let borrowedQuantity = itemData[2] || 0;
+
+          if (action === "Borrow") {
+            itemData[2] = Math.min(borrowedQuantity + quantity, totalQuantity); // Update borrowed quantity
+            itemData[3] = totalQuantity - itemData[2]; // Update remaining quantity
+            updateHistoryRecord(historyData, name, itemName, quantity, action);
+          } else if (action === "Return") {
+            let historyIndex = historyData.findIndex(
+              (record) =>
+                record[0].toLowerCase() === name.toLowerCase() && record[1].toLowerCase() === itemName.toLowerCase()
+            );
+
+            if (historyIndex === -1) {
+              alert("Invalid return: No borrowing record found.");
+              return;
+            }
+
+            let currentBorrowed = historyData[historyIndex][2];
+            if (currentBorrowed < quantity) {
+              alert("Invalid return: You can't return more than you've borrowed.");
+              return;
+            }
+
+            itemData[2] = Math.max(0, borrowedQuantity - quantity); // Update borrowed quantity
+            itemData[3] = totalQuantity - itemData[2]; // Update remaining quantity
+            historyData[historyIndex][2] = Math.max(0, currentBorrowed - quantity);
+            historyData[historyIndex][3] = historyData[historyIndex][2] === 0 ? "Returned" : "Not returned";
+          }
+
+          // Update local storage
+          localStorage.setItem("inventoryData", JSON.stringify(inventoryData));
+          localStorage.setItem("historyData", JSON.stringify(historyData));
+
+          // Update UI
+          updateDropdownOptions(inventoryData);
+          updateHistoryTable(historyData);
+          updateQuantitiesForSelectedItem(itemName); // Update quantities for the current selection
+        }
+
+        function updateHistoryRecord(historyData, name, itemName, quantity, action) {
+          let historyIndex = historyData.findIndex(
+            (record) =>
+              record[0].toLowerCase() === name.toLowerCase() && record[1].toLowerCase() === itemName.toLowerCase()
+          );
+
+          if (historyIndex !== -1) {
+            if (action === "Borrow") {
+              historyData[historyIndex][2] += quantity;
+              if (historyData[historyIndex][3] === "Returned") {
+                historyData[historyIndex][3] = "Not returned";
+              }
+            } else if (action === "Return") {
+              historyData[historyIndex][2] = Math.max(0, historyData[historyIndex][2] - quantity);
+              historyData[historyIndex][3] = historyData[historyIndex][2] > 0 ? "Not returned" : "Returned";
+            }
+          } else if (action === "Borrow") {
+            historyData.push([name, itemName, quantity, "Not returned"]);
+          }
+        }
+
+        // TOTAL FOR UI CHANGE OF HISTORY DATA
+        function updateHistoryTable(history) {
+          const $tableBody = $("#transaction-history tbody").empty();
+          history
+            .slice()
+            .reverse()
+            .forEach(function (row, index) {
+              // Ensure all rows are included
+              const $row = $("<tr>");
+              row.forEach(function (cell, cellIndex) {
+                if (cellIndex === 0) {
+                  // Assuming the name is in the first column
+                  cell = capitalizeName(cell);
+                }
+                // Convert zero values to "0" for visualization
+                const cellValue = cell === 0 ? "0" : cell;
+                $row.append($("<td>").text(cellValue || ""));
+              });
+              $tableBody.append($row);
+            });
+          updateTableStyles();
+        }
+        function capitalizeName(name) {
+          return name
+            .toLowerCase()
+            .split(" ")
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(" ");
+        }
+
+        function syncDataWithSheet() {
+          let itemName = $("#item-dropdown").val(); // Value from the item dropdown
+          let action = $("#action").val(); // Value from the return/borrow dropdown
+          let name = $("#name-input").val(); // Name entered
+          let quantity = $("#quantity-input").val(); // Quantity entered
+          let checkboxStatus = true; // Assuming you always want to send true for the checkbox
+
+          let dataToSend = {
+            itemName: itemName,
+            action: action,
+            name: name,
+            quantity: quantity,
+            submit: checkboxStatus, // Send the status of the checkbox
+          };
+
+          const proxyUrl = "https://corsproxy.io/?";
+          
+
+          $.ajax({
+            url: proxyUrl + scriptUrl,
+            // url: scriptUrl,
+            method: "POST",
+            contentType: "application/json",
+            data: JSON.stringify(dataToSend),
+            success: function (response) {
+              console.log("Data synced successfully:", response);
+              // Additional code for handling success
+            },
+            error: function (jqXHR, textStatus, errorThrown) {
+              console.error("AJAX request failed: ", textStatus, errorThrown);
+              console.error("Status: " + jqXHR.status);
+              console.error("Status Text: " + jqXHR.statusText);
+              console.error("Response Text: " + jqXHR.responseText);
+            },
+          });
+        }
+
+        function fetchAllData() {
+          console.log("Fetching data...");
+          showLoadingScreen();
+          const selectedItem = $("#item-dropdown").val();
+          $.ajax({
+            url: scriptUrl,
+            method: "GET",
+            dataType: "json",
+            data: { action: "getAllData" },
+            success: function (response) {
+              localStorage.setItem("inventoryData", JSON.stringify(response.inventory));
+              localStorage.setItem("historyData", JSON.stringify(response.history));
+              updateDropdownOptions(response.inventory);
+              if (selectedItem) {
+                $("#item-dropdown").val(selectedItem);
+                updateQuantitiesForSelectedItem(selectedItem);
+              }
+
+              updateHistoryTable(response.history);
+
+              hideLoadingScreen();
+            },
+            error: function (error) {
+              console.error("Error fetching data: ", error);
+
+              hideLoadingScreen();
+            },
+          });
+        }
+
+        function updateQuantitiesForSelectedItem(itemName) {
+          let inventoryData = JSON.parse(localStorage.getItem("inventoryData") || "[]");
+          let itemData = inventoryData.find((row) => row[0].toLowerCase() === itemName.toLowerCase());
+          if (itemData) {
+            $("#total-quantity-input").val(itemData[1]);
+            $("#remaining-quantity-input").val(itemData[3]);
+          } else {
+            $("#total-quantity-input").val("Not available");
+            $("#remaining-quantity-input").val("Not available");
+          }
+        }
+
+        function updateDropdownOptions(inventory) {
+          // Preserve the current selection
+          const currentSelection = $("#item-dropdown").val();
+
+          // Empty the dropdown and repopulate it
+          const $dropdown = $("#item-dropdown").empty();
+          inventory.forEach(function (row, index) {
+            if (index > 0) {
+              // Skip header row
+              $dropdown.append(new Option(row[0], row[0]));
+            }
+          });
+
+          // Restore the previous selection if it's still valid
+          if ($dropdown.find("option[value='" + currentSelection + "']").length > 0) {
+            $dropdown.val(currentSelection);
+          } else {
+            // If the previous selection is no longer valid, reset to the first item
+            $dropdown.val($dropdown.find("option:first").val());
+          }
+
+          // Trigger change event to update dependent fields
+          $dropdown.change();
+        }
+      });
+
+      function updateTableStyles() {
+        $("#transaction-history tbody tr").each(function () {
+          var statusCell = $(this).find("td:last-child"); // Selects the last column
+          if (statusCell.text().trim() === "Returned") {
+            statusCell.css("color", "green"); // Sets text color to green
+          } else {
+            statusCell.css("color", "red"); // Sets text color to red
+          }
+        });
+      }
+
+      function showLoadingScreen() {
+        const loadingScreen = document.getElementById("loading-screen");
+        loadingScreen.style.opacity = "1";
+      }
+
+      // Hide the loading screen
+      function hideLoadingScreen() {
+        const loadingScreen = document.getElementById("loading-screen");
+        loadingScreen.style.opacity = "0";
+        loadingScreen.style.display = "none";
+      }
+    </script>
+
+    <!-- For validation message in name and quantity -->
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        var nameInput = document.getElementById("name-input");
+        var quantityInput = document.getElementById("quantity-input");
+
+        nameInput.oninvalid = function (event) {
+          event.target.setCustomValidity(
+            "Name should contain alphabetic characters and optionally a space between words."
+          );
+        };
+
+        nameInput.onblur = function (event) {
+          // Trim the name input to remove any leading or trailing spaces only when the input loses focus
+          event.target.value = event.target.value.trim();
+        };
+
+        nameInput.oninput = function (event) {
+          event.target.setCustomValidity("");
+        };
+
+        quantityInput.oninvalid = function (event) {
+          event.target.setCustomValidity("Quantity should be a positive number.");
+        };
+
+        quantityInput.oninput = function (event) {
+          event.target.setCustomValidity("");
+        };
+      });
+    </script>
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        if (!isMobileDevice()) {
+          document.body.style.cssText = `
+        
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    height: calc(100vh - 50px); 
+    font-size: 14px;
+    overflow: hidden;
+    font-weight:200;
+    color: white;
+    margin: 0;
+    padding: 0;
+  }
+        `;
+          document.body.innerHTML =
+            "<h2 style='color: white; text-align: center;'>Please access this website with your mobile phone.</h2>";
+        }
+      });
+
+      function isMobileDevice() {
+        return /Mobi|Android/i.test(navigator.userAgent);
+      }
+    </script>
+  </body>
+</html>
